@@ -1,0 +1,17 @@
+# ── PPO hyperparameters ──────────────────────────────────────
+learning_rate: 0.0003      # step size for gradient updates
+n_steps: 2048              # steps collected before each policy update
+batch_size: 64             # mini-batch size for the update
+n_epochs: 10               # how many times to reuse each rollout buffer
+gamma: 0.99                # discount factor (how much future rewards matter)
+gae_lambda: 0.95           # GAE lambda (bias/variance tradeoff)
+clip_range: 0.2            # PPO clipping threshold (stabilises updates)
+ent_coef: 0.005            # entropy coefficient (encourages exploration)
+
+# ── Training duration ────────────────────────────────────────
+total_timesteps: 1000000   
+
+# ── Checkpointing and evaluation ────────────────────────────
+checkpoint_freq: 10000     # save checkpoint every 10k steps
+eval_freq: 5000            # run evaluation every 5k steps
+n_eval_episodes: 5         # number of episodes per evaluation

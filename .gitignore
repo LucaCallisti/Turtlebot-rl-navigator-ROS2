@@ -1,0 +1,71 @@
+# ── ROS2 Build System ───────────────────────────────────────
+build/
+install/
+log/
+*.egg-info/
+COLCON_IGNORE
+
+# ── Python Virtual Environments ─────────────────────────────
+venv/
+env/
+rl_env/
+ENV/
+.venv/
+
+# ── Python Caching ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ── Training & Logging ──────────────────────────────────────
+logs/
+*.tfevents.*
+.wandb/
+wandb/
+*.npz
+
+# ── Models & Artifacts ──────────────────────────────────────
+models/
+*.zip
+*.pkl
+
+# ── IDE & Editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.pytest_cache/
+.coverage
+
+# ── System Files ─────────────────────────────────────────────
+*.o
+*.a
+*.so
+.#*
+*.orig
+
+# ── Gazebo ──────────────────────────────────────────────────
+.gazebo/
+*.model/
+*.sdf.backup
+
+# ── ROS2 Generated Files ────────────────────────────────────
+*.deb
+*.tar.gz
+
+# ── Local Configuration ─────────────────────────────────────
+.env
+.env.local
+config/local.yaml
+
+# ── Jupyter ─────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Keep best models for inference ──────────────────────────
+# Uncomment to track trained models in git:
+# !models/best/
