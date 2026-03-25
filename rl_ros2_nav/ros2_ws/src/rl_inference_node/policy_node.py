@@ -30,7 +30,6 @@ class InferenceNode(Node):
     """
     Pure ROS2 inference node.
     Loads the trained policy as a raw PyTorch network —
-    no SB3 dependency at runtime.
     """
 
     def __init__(self):

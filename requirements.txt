@@ -1,0 +1,14 @@
+# Core RL and numerical stack
+numpy>=1.24
+torch>=2.0
+gymnasium>=0.29
+stable-baselines3>=2.3
+
+# Training utilities
+PyYAML>=6.0
+wandb>=0.17
+tensorboard>=2.14
+
+# NOTE:
+# ROS2 Python packages (e.g. rclpy, geometry_msgs, nav_msgs, sensor_msgs, std_srvs, gazebo_msgs)
+# are provided by your ROS2 installation and should be installed via apt, not pip.
