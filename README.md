@@ -38,9 +38,7 @@ robotics_project/
       └── logs/
 ```
 
-## Environment Details (from code)
-
-Source: `rl_ros2_nav/rl_gym_env/env.py` and `rl_ros2_nav/rl_gym_env/constants.py`.
+## Environment Details 
 
 ### Observation (state)
 
