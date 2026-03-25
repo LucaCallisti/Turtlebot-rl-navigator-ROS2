@@ -5,13 +5,16 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.common.env_util import make_vec_env
 
-# Add ROS2 workspace to Python path
+# Add paths for imports
+sys.path.append(os.path.expanduser(
+    "~/robotics_project/rl_ros2_nav"))
 sys.path.append(os.path.expanduser(
     "~/robotics_project/rl_ros2_nav/ros2_ws/src/rl_gym_env"))
+
 from rl_gym_env.env import NavEnv
 
 # ── Config ───────────────────────────────────────────────────
-MODELS_DIR   = os.path.expanduser("~/robotics_project/rl_ros2_nav/models")
+MODELS_DIR   = os.path.expanduser("~/robotics_project/rl_ros2_nav/models/best")
 N_EPISODES   = 20       # number of test episodes
 DETERMINISTIC = True    # no exploration during evaluation
 
@@ -84,8 +87,8 @@ def evaluate(model_path=None, vecnorm_path=None):
 
 if __name__ == "__main__":
     # By default loads the best model saved by EvalCallback
-    model_path  = os.path.join(MODELS_DIR, "ppo_nav_500000_steps.zip")
-    vecnorm_path = os.path.join(MODELS_DIR, "ppo_nav_vecnormalize_500000_steps.pkl")
+    model_path  = os.path.join(MODELS_DIR, "best_model.zip")
+    vecnorm_path = os.path.join(MODELS_DIR, "best_model_vecnormalize.pkl")
 
     # Fallback to final model if best does not exist yet
     if not os.path.exists(model_path):

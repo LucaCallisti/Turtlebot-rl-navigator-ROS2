@@ -1,216 +1,133 @@
-# TurtleBot3 RL Navigator - ROS2 Integration Project
+# TurtleBot RL Navigator (ROS2 + PPO)
 
-A **ROS2-based autonomous navigation system** for TurtleBot3 that combines reinforcement learning with real-time sensor integration. This project demonstrates end-to-end ROS2 development: from environment simulation to policy training and deployment as a production-ready inference node.
+Autonomous navigation project for TurtleBot3 in Gazebo using reinforcement learning (PPO with Stable-Baselines3) and a ROS2 inference node.
 
-## 🎯 Project Overview
+## Project Description
 
-This project showcases practical **ROS2 skills** through building a complete autonomous navigation pipeline:
+This repository implements a full training-to-deployment loop:
 
-- **ROS2 Node Development**: Custom nodes for sensor data handling and control
-- **Message Publishing/Subscription**: LiDAR (LaserScan), Odometry, and velocity command integration
-- **Service Clients**: Gazebo world reset for environment management
-- **PyTorch Model Inference**: Real-time policy execution without SB3 overhead
-- **Sensor Fusion**: Combining LiDAR and odometry for navigation decisions
+1. A Gymnasium environment (`NavEnv`) connected to ROS2 topics.
+2. PPO training with `VecNormalize`, checkpoints, and periodic evaluation.
+3. A lightweight ROS2 inference node that loads the trained policy and publishes velocity commands.
 
-## 🏗️ Architecture
+The robot navigates toward a fixed goal while avoiding collisions, using LiDAR and odometry.
 
-```
-┌─────────────────────────────────────────────┐
-│         TurtleBot3 (Gazebo)                │
-│  ┌──────────────────────────────────────┐  │
-│  │   /scan (LaserScan)                 │  │
-│  │   /odom (Odometry)                  │  │
-│  │   /cmd_vel (Twist)                  │  │
-│  └──────────────────────────────────────┘  │
-└─────────────────────────────────────────────┘
-        ▲                ▲              │
-        │                │              │
-   Subscribes        Subscribes    Publishes
-        │                │              │
-        └────────────────┼──────────────┘
-                         │
-              ┌──────────▼──────────┐
-              │  Inference Node      │
-              │  (policy_node.py)    │
-              │                      │
-              │ • Normalize obs      │
-              │ • Load PyTorch model │
-              │ • Execute policy     │
-              │ • Publish commands   │
-              └──────────────────────┘
+## Main Repository Layout
+
+```text
+robotics_project/
+├── README.md
+├── launch/
+│   └── turtlebot3_world.launch.py
+├── worlds/
+│   └── turtlebot3_world.world
+├── src/
+│   └── turtlebot_rl/
+└── rl_ros2_nav/
+      ├── rl_gym_env/
+      │   ├── constants.py
+      │   └── env.py
+      ├── training/
+      │   ├── callbacks/save_best_callback.py
+      │   ├── config/ppo_config.yaml
+      │   ├── evaluate.py
+      │   └── train.py
+      ├── ros2_ws/
+      │   └── src/rl_inference_node/policy_node.py
+      ├── models/
+      └── logs/
 ```
 
-## 📊 Training Pipeline
+## Environment Details (from code)
 
-```
-NavEnv (Gymnasium) ──► VecNormalize ──► PPO (SB3) ──► Best Model
-  │                         │              │              │
-  ├─ 36 LiDAR rays    ├─ Obs normalization │              │
-  ├─ Goal distance    │  (mean/std)     ├─ 500k steps   │
-  ├─ Goal angle       │                 │               │
-  └─ ROS2 topics      └─ Reward norm    └─ Checkpoint   └──► Inference
-```
+Source: `rl_ros2_nav/rl_gym_env/env.py` and `rl_ros2_nav/rl_gym_env/constants.py`.
 
-## ⚙️ Key Components
+### Observation (state)
 
-### 1. **Navigation Environment** (`rl_gym_env/env.py`)
-- Gymnasium-compliant environment wrapping TurtleBot3 in Gazebo
-- **Observation space**: 36 downsampled LiDAR rays + distance/angle to goal
-- **Action space**: Linear velocity [0.0, 0.22] m/s, Angular velocity [-2.0, 2.0] rad/s
-- ROS2 integration: subscribes to `/scan` and `/odom`, publishes to `/cmd_vel`
+State size is 38:
 
-### 2. **Training Script** (`training/train.py`)
-- PPO algorithm with 500k training steps
-- Vectorized environment and VecNormalize for observation normalization
-- Checkpoint and best-model callbacks
-- Configuration from YAML
+- `0:35` -> 36 downsampled LiDAR values, normalized to `[0, 1]`
+- `36` -> normalized distance to goal (`dist / 5.0`, clipped to `1.0`)
+- `37` -> normalized heading error (`heading_error / pi`, in `[-1, 1]`)
 
-### 3. **Inference Node** (`ros2_ws/src/rl_inference_node/policy_node.py`)
-- Pure ROS2 node (no SB3 dependency at runtime)
-- Loads trained PyTorch policy directly
-- Applies saved VecNormalize statistics
-- 10 Hz control loop with collision detection
-- Status publishing to `/rl_status`
+Constants:
 
-## 🚀 Quick Start
+- `LIDAR_SAMPLES = 36`
+- `MAX_LIDAR_RANGE = 3.5`
+- Goal position: `(GOAL_X, GOAL_Y) = (1.5, 1.0)`
 
-### Prerequisites
+### Action space
+
+Continuous 2D action:
+
+- Linear velocity: `[0.0, 0.22]` m/s (forward only)
+- Angular velocity: `[-2.0, 2.0]` rad/s
+
+### Reward function
+
+Per step logic:
+
+- Collision if `min_lidar < 0.12` -> reward `-200`, episode ends
+- Goal reached if `distance < 0.25` -> reward `+300`, episode ends
+- Otherwise:
+   - progress reward: `150 * (previous_distance - current_distance)`
+   - step penalty: `-0.1`
+   - total reward: `progress - 0.1`
+
+In formula form (non-terminal step):
+
+$$
+r_t = 150 \cdot (d_{t-1} - d_t) - 0.1
+$$
+
+### Episode reset and random initial position
+
+By default, `NavEnv` is created with `random_spawn=True` in `training/train.py`.
+
+At reset:
+
+- The robot is first stopped.
+- A random spawn is sampled in a square area around the origin:
+   - `x, y ~ U(-SPAWN_AREA_SIZE/2, SPAWN_AREA_SIZE/2)`
+   - with `SPAWN_AREA_SIZE = 3.0`
+   - random yaw in `[0, 2*pi]`
+- Up to 20 spawn attempts are made, checking safety via LiDAR.
+- Final fallback on last attempt is `(0.0, -0.5)`.
+
+### Termination and truncation
+
+- `done=True` on goal or collision
+- `truncated=True` when step count reaches `MAX_STEPS = 500`
+- `info["termination"]` is set to `goal_reached`, `collision`, or `timeout`
+
+## How To Start Training
+
+### 1) Start Gazebo 
 
 ```bash
-# ROS2 Humble
 source /opt/ros/humble/setup.bash
-
-# Python 3.10+
-python3 --version
-
-# Key dependencies (install in virtual environment)
-pip install gymnasium stable-baselines3 torch numpy pyyaml
+export TURTLEBOT3_MODEL=burger
+ros2 launch /home/luca/robotics_project/launch/turtlebot3_world.launch.py
 ```
 
-### Setup
-
-1. **Clone and build the ROS2 workspace**:
-   ```bash
-   cd ~/robotics_project/rl_ros2_nav
-   source /opt/ros/humble/setup.bash
-   colcon build
-   source install/setup.bash
-   ```
-
-2. **Setup TurtleBot3 Gazebo** (in separate terminal):
-   ```bash
-   export TURTLEBOT3_MODEL=burger
-   ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py
-   ```
-
-### Training
+### 2) Run training 
 
 ```bash
-cd ~/robotics_project/rl_ros2_nav
 python3 training/train.py
 ```
 
-Logs and checkpoints are saved to `models/` and `logs/` directories. Best model is stored in `models/best/`.
+Default parameters are saved in rl_ros2_nav/training/config/ppo_config.yaml
 
-### Inference
+## Inference
 
-1. **Launch Gazebo with TurtleBot3** (see Setup step 2)
+With Gazebo already running:
 
-2. **Run the inference node**:
-   ```bash
-   cd ~/robotics_project/rl_ros2_nav/ros2_ws
-   source /opt/ros/humble/setup.bash
-   source install/setup.bash
-   
-   ros2 run rl_inference_node policy_node
-   ```
-
-3. **Monitor behavior**:
-   ```bash
-   # Watch status messages
-   ros2 topic echo /rl_status
-   
-   # Visualize in RViz
-   rviz2
-   ```
-
-## 📋 Configuration
-
-Edit `training/config/ppo_config.yaml` to customize training:
-
-```yaml
-policy: "MlpPolicy"              # Network architecture
-learning_rate: 3e-4              # Adam optimizer LR
-n_steps: 2048                     # Rollout buffer size
-batch_size: 64                    # Mini-batch size
-n_epochs: 10                      # PPO epochs per update
-gamma: 0.99                       # Discount factor
-gae_lambda: 0.95                  # GAE parameter
-checkpoint_freq: 50000            # Save checkpoint every N steps
+```bash
+python3 rl_ros2_nav/ros2_ws/src/rl_inference_node/policy_node.py
 ```
 
-## 🧠 Environment Details
+Default files used by the inference node:
 
-**Goal**: Navigate TurtleBot3 to position (1.5, 1.0) while avoiding obstacles.
-
-**Observation** (38-dim vector):
-- **[0:36]** - Normalized 360° LiDAR scan downsampled to 36 rays
-- **[36]** - Normalized distance to goal
-- **[37]** - Normalized heading error (-1 to 1)
-
-**Reward**:
-- ✅ **+100** - Reached goal (distance < 0.25 m)
-- ❌ **-100** - Collision (LiDAR < 0.12 m)
-- ⏱️ **-1** - Per step (encourages quick navigation)
-- 📍 -1/(max_steps) for each step of distance decrease
-
-**Episode Termination**:
-- Goal reached
-- Collision detected
-- Max steps (500) exceeded
-
-## 📈 Results
-
-After training:
-- **Success rate**: ~85-90% on test episodes
-- **Average episode length**: ~150-200 steps
-- **Training time**: ~2-3 hours (1 GPU)
-- **Model size**: ~50KB (PyTorch .pth)
-
-## 🔧 ROS2 Skills Demonstrated
-
-✅ **Node Creation & Lifecycle**: Custom ROS2 nodes with proper initialization  
-✅ **Pub/Sub Communication**: Multi-topic subscriptions and message publishing  
-✅ **Message Types**: LaserScan, Odometry, Twist, String, Marker  
-✅ **Service Clients**: Gazebo world reset service  
-✅ **Timers & Callbacks**: Asynchronous control loops at fixed rate  
-✅ **Colcon Build System**: Workspace organization and building  
-✅ **Logging**: ROS2 logger for debugging and monitoring  
-
-## 📦 Project Structure
-
-```
-robotics_project/
-├── src/turtlebot_rl/              # ROS2 package root
-│   ├── setup.py
-│   ├── package.xml
-│   └── test/
-├── rl_ros2_nav/
-│   ├── rl_gym_env/                # Gymnasium environment
-│   │   ├── env.py
-│   │   └── constants.py
-│   ├── training/                  # Training pipeline
-│   │   ├── train.py
-│   │   ├── evaluate.py
-│   │   ├── config/ppo_config.yaml
-│   │   └── callbacks/
-│   ├── models/                    # Trained policies
-│   │   └── best/
-│   ├── logs/                      # TensorBoard logs
-│   └── ros2_ws/
-│       └── src/
-│           └── rl_inference_node/
-│               └── policy_node.py
-└── README.md
-```
+- `rl_ros2_nav/models/best/best_model.zip`
+- `rl_ros2_nav/models/best/best_model_vecnormalize.pkl`
 

@@ -12,7 +12,7 @@ import wandb
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.integration.wandb_callback import WandBCallback
+from wandb.integration.sb3 import WandbCallback
 from training.callbacks.save_best_callback import SaveBestWithNormalizeCallback
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -27,9 +27,10 @@ CONFIG_PATH = os.path.expanduser(
 MODELS_DIR  = os.path.expanduser("~/robotics_project/rl_ros2_nav/models")
 LOGS_DIR    = os.path.expanduser("~/robotics_project/rl_ros2_nav/logs")
 
-# MODEL_TO_LOAD = "/home/luca/robotics_project/rl_ros2_nav/models/ppo_nav_500000_steps.zip"
-# VECNORM_TO_LOAD = "/home/luca/robotics_project/rl_ros2_nav/models/ppo_nav_vecnormalize_500000_steps.pkl"
-
+MODEL_TO_LOAD = "/home/luca/robotics_project/rl_ros2_nav/models/ppo_nav_30000_steps.zip"
+VECNORM_TO_LOAD = "/home/luca/robotics_project/rl_ros2_nav/models/ppo_nav_vecnormalize_30000_steps.pkl"
+MODEL_TO_LOAD = None
+VECNORM_TO_LOAD = None
 
 def load_config(path):
     with open(path, "r") as f:
@@ -55,7 +56,7 @@ def train():
         sync_tensorboard=True,
     )
 
-    resuming = os.path.exists(MODEL_TO_LOAD) and os.path.exists(VECNORM_TO_LOAD)
+    resuming = os.path.exists(MODEL_TO_LOAD) and os.path.exists(VECNORM_TO_LOAD) if MODEL_TO_LOAD and VECNORM_TO_LOAD else False
     
 
     # ── 1. Create vectorised environments ───────────────────
@@ -95,7 +96,14 @@ def train():
     )
 
     # ── W&B Callback for live logging ────────────────────────
-    wandb_cb = WandBCallback(
+    run = wandb.init(
+        project="turtlebot-rl-navigation",
+        sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+        monitor_gym=True,  # auto-upload the videos of agents playing the game
+        save_code=True,  # optional
+    )
+
+    wandb_cb = WandbCallback(
         gradient_save_freq=0,  # Disable gradient logging
         model_save_path=None,  # Don't save model to W&B (we save locally)
         verbose=0,
@@ -135,7 +143,7 @@ def train():
     )
 
     # ── Finish W&B run ──────────────────────────────────────
-    wandb.finish()
+    run.finish()
 
     # ── 5. Save final model ──────────────────────────────────
     final_path = os.path.join(MODELS_DIR, "ppo_nav_final")

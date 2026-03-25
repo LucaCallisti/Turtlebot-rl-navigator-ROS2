@@ -2,18 +2,21 @@ import gymnasium as gym
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Pose, Point, Quaternion
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
-from visualization_msgs.msg import Marker
 import math
 import time
+from gazebo_msgs.srv import SetEntityState
+from gazebo_msgs.msg import EntityState
 
 from rl_gym_env.constants import (
     LIDAR_SAMPLES, MAX_LIDAR_RANGE,
-    GOAL_X, GOAL_Y, COLLISION_DIST, MAX_STEPS
+    GOAL_X, GOAL_Y, COLLISION_DIST, MAX_STEPS, SPAWN_AREA_SIZE
 )
+from ament_index_python.packages import get_package_share_directory
+import os
 
 class NavEnv(gym.Env):
     """
@@ -31,8 +34,9 @@ class NavEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self):
+    def __init__(self, random_spawn=True):
         super().__init__()
+        self.random_spawn = random_spawn
 
         # ── Spaces ───────────────────────────────────────────
         obs_size = LIDAR_SAMPLES + 2   # 36 lidar + dist + angle
@@ -70,13 +74,17 @@ class NavEnv(gym.Env):
             Twist, "/cmd_vel", 10)
         # client for reset_world service (used to reset Gazebo world, which teleports robot back to spawn position)
         self._reset_client = self.node.create_client(Empty, "/reset_world")
-        # publisher for RViz marker to visualise the goal position
-        self._marker_pub = self.node.create_publisher(
-            Marker, "/goal_marker", 10)
+        if self.random_spawn:
+            self._set_state_client = self.node.create_client(
+                SetEntityState, "/gazebo/set_entity_state"
+            )
+            if not self._set_state_client.wait_for_service(timeout_sec=5.0):
+                self.node.get_logger().warn("set_entity_state service not available")
 
         # ── Episode state ────────────────────────────────────
         self._step_count = 0
         self._prev_dist  = None
+        self._robot_spawned = False  # Track if robot has been spawned
 
     # ── ROS2 callbacks ───────────────────────────────────────
 
@@ -164,6 +172,61 @@ class NavEnv(gym.Env):
 
     # ── Gym API ──────────────────────────────────────────────
 
+    def _is_spawn_safe(self):
+        """
+        Check if current robot position is collision-free.
+        Returns True if all LiDAR readings are > COLLISION_DIST + safety margin.
+        """
+        if self._scan is None:
+            return False
+        
+        lidar_ranges = np.array(self._scan.ranges, dtype=np.float32)
+        lidar_ranges = np.nan_to_num(lidar_ranges, nan=MAX_LIDAR_RANGE, posinf=MAX_LIDAR_RANGE)
+        
+        # Check if minimum LiDAR reading is > collision distance + margin
+        min_range = np.min(lidar_ranges)
+        return min_range > (COLLISION_DIST + 0.1)  # 10cm safety margin
+
+    def _respawn_robot_at_random_pose(self):
+    
+        max_attempts = 20
+        for attempt in range(max_attempts):
+            self.node.get_logger().info(f"Attempting to spawn robot at random position (attempt {attempt + 1}/{max_attempts})...")
+            spawn_x = self.np_random.uniform(-SPAWN_AREA_SIZE/2, SPAWN_AREA_SIZE/2)
+            spawn_y = self.np_random.uniform(-SPAWN_AREA_SIZE/2, SPAWN_AREA_SIZE/2)
+            spawn_yaw = self.np_random.uniform(0, 2 * math.pi)
+
+            qz = math.sin(spawn_yaw / 2.0)
+            qw = math.cos(spawn_yaw / 2.0)
+
+            if attempt == max_attempts - 1:
+                spawn_x, spawn_y = 0.0, -0.5  
+                self.node.get_logger().warn("Spawning in a safe default position")
+
+            req = SetEntityState.Request()
+            req.state = EntityState()
+            req.state.name = "burger"
+            req.state.pose = Pose(
+                position=Point(x=float(spawn_x), y=float(spawn_y), z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=float(qz), w=float(qw))
+            )
+            req.state.reference_frame = "world"
+
+            result = self._call_service(self._set_state_client, req)
+            if result is None:
+                continue
+
+            # Wait a bit for the robot to be teleported and for sensor data to update
+            time.sleep(0.3)
+            for _ in range(10):
+                self._spin_once()
+                time.sleep(0.05)
+            # Check if the new position is safe (not colliding with obstacles)
+            if self._is_spawn_safe():
+                self.node.get_logger().info(f"Spawned robot at x={spawn_x:.2f}, y={spawn_y:.2f}, yaw={spawn_yaw:.2f} radians...")
+                break
+
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -171,14 +234,17 @@ class NavEnv(gym.Env):
         self._publish_velocity(0.0, 0.0)
         time.sleep(0.1)  # small delay to ensure robot has stopped
 
-        # Reset Gazebo world — teleports robot back to spawn position
-        if self._reset_client.wait_for_service(timeout_sec=2.0):
-            req = Empty.Request()
-            self._reset_client.call_async(req)
-            time.sleep(0.5)   # wait for world to reset
+        if self.random_spawn:
+            self._respawn_robot_at_random_pose()
         else:
-            self.node.get_logger().warn("reset_world service not available")
-
+            # Reset Gazebo world — teleports robot back to spawn position
+            if self._reset_client.wait_for_service(timeout_sec=2.0):
+                req = Empty.Request()
+                self._reset_client.call_async(req)
+                time.sleep(0.5)   # wait for world to reset
+            else:
+                self.node.get_logger().warn("reset_world service not available")
+     
         # Reset counters
         self._step_count = 0
         self._prev_dist  = None
@@ -192,7 +258,6 @@ class NavEnv(gym.Env):
 
         obs = self._get_obs()
         self._prev_dist = obs[LIDAR_SAMPLES] * 5.0
-        self._publish_goal_marker()
         return obs, {}
 
     def step(self, action):
@@ -237,20 +302,17 @@ class NavEnv(gym.Env):
         if rclpy.ok():
             rclpy.shutdown()
 
-    def _publish_goal_marker(self):
-        m = Marker()
-        m.header.frame_id = "odom"
-        m.type = Marker.CYLINDER
-        m.action = Marker.ADD
-        m.pose.position.x = float(GOAL_X)
-        m.pose.position.y = float(GOAL_Y)
-        m.pose.position.z = 0.1
-        m.pose.orientation.w = 1.0
-        m.scale.x = 0.3
-        m.scale.y = 0.3
-        m.scale.z = 0.2
-        m.color.r = 1.0
-        m.color.g = 0.2
-        m.color.b = 0.0
-        m.color.a = 0.8
-        self._marker_pub.publish(m)
+    def _call_service(self, client, request, timeout_sec=15.0):
+        future = client.call_async(request)
+        start = time.time()
+        try:
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
+        except Exception as e:
+            self.node.get_logger().warn(f"Service call error: {e}")
+            return None
+        elapsed = time.time() - start
+        if future.done():
+            self.node.get_logger().info(f"Service call completed in {elapsed:.2f}s")
+            return future.result()
+        self.node.get_logger().warn(f"Service call timed out after {elapsed:.2f}s")
+        return None
