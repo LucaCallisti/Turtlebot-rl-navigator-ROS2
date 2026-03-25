@@ -2,6 +2,10 @@
 
 Autonomous navigation project for TurtleBot3 in Gazebo using reinforcement learning (PPO with Stable-Baselines3) and a ROS2 inference node.
 
+
+https://github.com/user-attachments/assets/1f7ac3a6-e61c-4aae-a9e9-ff086e04a31c
+
+
 ## Project Description
 
 This repository implements a full training-to-deployment loop:
